@@ -1,0 +1,10 @@
+{
+	"displayName": "Workspace Manager",
+	"description": "Workspace management: generate and manage .code-workspace files",
+	"command.category": "lan",
+	"command.generate": "Generate .code-workspace",
+	"command.newproject": "New Project",
+	"command.copycurrentpath": "Copy Current File Path",
+	"command.editimginPS": "Edit Image in Photoshop",
+	"config.photoshopPath": "Full path of Photoshop.exe, e.g. C:\\Program Files\\Adobe\\Adobe Photoshop 2024\\Photoshop.exe"
+}

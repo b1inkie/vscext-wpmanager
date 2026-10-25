@@ -1,0 +1,72 @@
+{
+	"name": "wpmanager",
+	"displayName": "%displayName%",
+	"description": "%description%",
+	"version": "0.5.0",
+	"publisher": "lan",
+	"author": {
+		"name": "b1inkie",
+		"url": "https://gitee.com/b1inkie"
+	},
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.74.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"l10n": "./l10n",
+	"activationEvents": [],
+	"main": "./extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "wpmanager.generate",
+				"category": "%command.category%",
+				"title": "%command.generate%"
+			},
+			{
+				"command": "wpmanager.newproject",
+				"category": "%command.category%",
+				"title": "%command.newproject%"
+			},
+			{
+				"command": "wpmanager.copycurrentpath",
+				"category": "%command.category%",
+				"title": "%command.copycurrentpath%"
+			},
+			{
+				"command": "wpmanager.editimginPS",
+				"category": "%command.category%",
+				"title": "%command.editimginPS%"
+			}
+		],
+		"menus": {
+			"explorer/context": [
+				{
+					"command": "wpmanager.editimginPS",
+					"when": "resourceScheme == file && resourceExtname =~ /\\.(png|jpe?g|gif|bmp|webp|tiff?|ico)$/i"
+				}
+			],
+			"editor/title/context": [
+				{
+					"command": "wpmanager.editimginPS",
+					"when": "resourceScheme == file && resourceExtname =~ /\\.(png|jpe?g|gif|bmp|webp|tiff?|ico)$/i"
+				}
+			]
+		},
+		"configuration": {
+			"title": "%displayName%",
+			"properties": {
+					"wpmanager.photoshopPath": {
+					"type": "string",
+					"default": "",
+					"description": "%config.photoshopPath%"
+				}
+			}
+		}
+	},
+	"scripts": {
+		"package": "npx --yes @vscode/vsce package"
+	}
+}

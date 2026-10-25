@@ -1,0 +1,6 @@
+node_modules/
+.vscode-test/
+*.vsix
+VSCODE_EXTENSION_DEV_GUIDE.md
+*.code-workspace
+_temp/

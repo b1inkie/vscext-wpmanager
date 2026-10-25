@@ -1,0 +1,10 @@
+{
+	"displayName": "Workspace Manager",
+	"description": "工作区管理:生成与管理 .code-workspace 工作区",
+	"command.category": "lan",
+	"command.generate": "生成 .code-workspace",
+	"command.newproject": "新建项目",
+	"command.copycurrentpath": "拷贝当前文件绝对路径",
+	"command.editimginPS": "在 Photoshop 中编辑图片",
+	"config.photoshopPath": "Photoshop.exe 的完整路径,例如 C:\\Program Files\\Adobe\\Adobe Photoshop 2024\\Photoshop.exe"
+}
