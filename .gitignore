@@ -3,4 +3,5 @@ node_modules/
 *.vsix
 VSCODE_EXTENSION_DEV_GUIDE.md
 *.code-workspace
-_temp/DESIGN.md
+_temp/
+DESIGN.md
