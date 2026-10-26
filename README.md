@@ -1,6 +1,6 @@
 # Workspace Manager(wpmanager)
 
-工作区管理插件:生成/新建/管理 `.code-workspace` 工作区(后续会加入更多工作区管理能力)。扩展 ID:`lan.wpmanager`,仓库计划名:`vscext-wpmanager`(暂不上传)。
+工作区管理插件:生成/新建/管理 `.code-workspace` 工作区(后续会加入更多工作区管理能力)。扩展 ID:`lan.wpmanager`,仓库:<https://github.com/b1inkie/vscext-wpmanager>。
 
 ## 用法
 

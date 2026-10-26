@@ -1,5 +1,5 @@
 {
-	"displayName": "Workspace Manager",
+	"displayName": "WPManager",
 	"description": "工作区管理:生成与管理 .code-workspace 工作区",
 	"command.category": "lan",
 	"command.generate": "生成 .code-workspace",

@@ -4,6 +4,11 @@
 	"description": "%description%",
 	"version": "0.6.0",
 	"publisher": "lan",
+	"icon": "media/icon.png",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/b1inkie/vscext-wpmanager"
+	},
 	"author": {
 		"name": "b1inkie",
 		"url": "https://gitee.com/b1inkie"
