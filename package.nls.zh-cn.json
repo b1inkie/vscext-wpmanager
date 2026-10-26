@@ -6,5 +6,14 @@
 	"command.newproject": "新建项目",
 	"command.copycurrentpath": "拷贝当前文件绝对路径",
 	"command.editimginPS": "在 Photoshop 中编辑图片",
-	"config.photoshopPath": "Photoshop.exe 的完整路径,例如 C:\\Program Files\\Adobe\\Adobe Photoshop 2024\\Photoshop.exe"
+	"command.addWorkspaceFile": "添加 .code-workspace 文件",
+	"command.addProjectFolder": "添加多项目文件夹",
+	"command.removeWorkspaceEntry": "从列表移除",
+	"command.showIgnored": "显示已忽略项目",
+	"command.hideIgnored": "✓ 显示已忽略项目",
+	"config.photoshopPath": "Photoshop.exe 的完整路径,例如 C:\\Program Files\\Adobe\\Adobe Photoshop 2024\\Photoshop.exe",
+	"activitybar.title": "工作区管理",
+	"view.workspaces": "工作区",
+	"config.scanMaxDepth": "扫描多项目文件夹时递归深度(1-8)",
+	"config.scanExcludeNames": "扫描多项目文件夹时按名称排除的目录"
 }

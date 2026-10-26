@@ -2,7 +2,7 @@
 	"name": "wpmanager",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"publisher": "lan",
 	"author": {
 		"name": "b1inkie",
@@ -19,6 +19,23 @@
 	"activationEvents": [],
 	"main": "./extension.js",
 	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "wpmanager",
+					"title": "%activitybar.title%",
+					"icon": "media/workspaces.svg"
+				}
+			]
+		},
+		"views": {
+			"wpmanager": [
+				{
+					"id": "wpmanager.workspaces",
+					"name": "%view.workspaces%"
+				}
+			]
+		},
 		"commands": [
 			{
 				"command": "wpmanager.generate",
@@ -39,9 +56,72 @@
 				"command": "wpmanager.editimginPS",
 				"category": "%command.category%",
 				"title": "%command.editimginPS%"
+			},
+			{
+				"command": "wpmanager.addWorkspaceFile",
+				"category": "%command.category%",
+				"title": "%command.addWorkspaceFile%",
+				"icon": "$(new-file)"
+			},
+			{
+				"command": "wpmanager.addProjectFolder",
+				"category": "%command.category%",
+				"title": "%command.addProjectFolder%",
+				"icon": "$(new-folder)"
+			},
+			{
+				"command": "wpmanager.removeWorkspaceEntry",
+				"category": "%command.category%",
+				"title": "%command.removeWorkspaceEntry%"
+			},
+			{
+				"command": "wpmanager.showIgnoredWorkspaces",
+				"category": "%command.category%",
+				"title": "%command.showIgnored%"
+			},
+			{
+				"command": "wpmanager.hideIgnoredWorkspaces",
+				"category": "%command.category%",
+				"title": "%command.hideIgnored%"
 			}
 		],
 		"menus": {
+			"view/title": [
+				{
+					"command": "wpmanager.addWorkspaceFile",
+					"group": "navigation@1",
+					"when": "view == wpmanager.workspaces"
+				},
+				{
+					"command": "wpmanager.addProjectFolder",
+					"group": "navigation@2",
+					"when": "view == wpmanager.workspaces"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "wpmanager.removeWorkspaceEntry",
+					"when": "view == wpmanager.workspaces && viewItem =~ /entry|root/"
+				},
+				{
+					"command": "wpmanager.showIgnoredWorkspaces",
+					"when": "view == wpmanager.workspaces && viewItem =~ /root|group/ && viewItem =~ /ign-hidden/"
+				},
+				{
+					"command": "wpmanager.hideIgnoredWorkspaces",
+					"when": "view == wpmanager.workspaces && viewItem =~ /root|group/ && viewItem =~ /ign-shown/"
+				}
+			],
+			"commandPalette": [
+				{
+					"command": "wpmanager.showIgnoredWorkspaces",
+					"when": "false"
+				},
+				{
+					"command": "wpmanager.hideIgnoredWorkspaces",
+					"when": "false"
+				}
+			],
 			"explorer/context": [
 				{
 					"command": "wpmanager.editimginPS",
@@ -58,10 +138,30 @@
 		"configuration": {
 			"title": "%displayName%",
 			"properties": {
-					"wpmanager.photoshopPath": {
+				"wpmanager.photoshopPath": {
 					"type": "string",
 					"default": "",
 					"description": "%config.photoshopPath%"
+				},
+				"wpmanager.scanMaxDepth": {
+					"type": "number",
+					"default": 3,
+					"minimum": 1,
+					"maximum": 8,
+					"description": "%config.scanMaxDepth%"
+				},
+				"wpmanager.scanExcludeNames": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [
+						"node_modules",
+						".git",
+						".venv",
+						"dist"
+					],
+					"description": "%config.scanExcludeNames%"
 				}
 			}
 		}

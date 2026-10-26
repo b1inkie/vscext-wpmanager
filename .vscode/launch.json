@@ -1,0 +1,21 @@
+{
+	// F5 调试:启动 Extension Development Host(带本扩展源码的独立 VSCode 实例)
+	// 注:user-data-dir 必须独立隔离——默认与主窗口共用 state.vscdb 时,调试宿主与主实例的 exthost
+	// 会互相打断(日志表现为 exthost crashed with code 134/SIGABRT,用户看到的"闪退")
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "运行扩展 wpmanager",
+			"type": "extensionHost",
+			"request": "launch",
+			"args": [
+				"--extensionDevelopmentPath=${workspaceFolder}",
+				"--user-data-dir=${env:APPDATA}\\wpmanager-dev-host",
+				"--disable-extensions"
+			],
+			"outFiles": [
+				"${workspaceFolder}/**/*.js"
+			]
+		}
+	]
+}

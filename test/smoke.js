@@ -17,16 +17,24 @@ const mockConfig = {};
 let mockClip = '';
 let copyPathResult = '';
 let currentPick = null;
+let mockTreeView = null;
 const flush = async () => { for (let i = 0; i < 5; i++) { await new Promise((r) => setTimeout(r, 0)); } };
 
 const mockVscode = {
 	commands: {
 		registerCommand: (id, fn) => {
-			assert.ok(['wpmanager.generate', 'wpmanager.newproject', 'wpmanager.copycurrentpath', 'wpmanager.editimginPS'].includes(id), '未知命令: ' + id);
+			assert.ok(['wpmanager.generate', 'wpmanager.newproject', 'wpmanager.copycurrentpath', 'wpmanager.editimginPS', 'wpmanager._openEntry', 'wpmanager._selectEntry', 'wpmanager._setIgnored', 'wpmanager._setPinned', 'wpmanager._setAlias', 'wpmanager.addWorkspaceFile', 'wpmanager.addProjectFolder', 'wpmanager.removeWorkspaceEntry', 'wpmanager.showIgnoredWorkspaces', 'wpmanager.hideIgnoredWorkspaces'].includes(id), '未知命令: ' + id);
 			handlers[id] = fn;
 			return { dispose() {} };
 		},
-		executeCommand: async (cmd) => { log.push(`exec:${cmd}`); if (cmd === 'copyFilePath') { mockClip = copyPathResult; } }
+		executeCommand: async (cmd, ...args) => {
+			log.push(`exec:${cmd}`);
+			if (cmd === 'copyFilePath') { mockClip = copyPathResult; }
+			if (cmd === 'vscode.openFolder') {
+				// 记录完整参数,便于断言 uri 与 newWindow
+				log[log.length - 1] = `exec:${cmd}:${args[0] && args[0].fsPath}:${args[1] === true}`;
+			}
+		}
 	},
 	l10n: {
 		t: (key, ...args) => {
@@ -36,6 +44,15 @@ const mockVscode = {
 		}
 	},
 	ThemeIcon: class { constructor(id) { this.id = id; } },
+	TreeItem: class { constructor(label, collapsibleState) { this.label = label; this.collapsibleState = collapsibleState; } },
+	TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+	MarkdownString: class { constructor(value, supportIcons) { this.value = value || ''; this.supportThemeIcons = !!supportIcons; } appendMarkdown(t) { this.value += t; return this; } },
+	EventEmitter: class {
+		constructor() { this._cbs = []; }
+		get event() { return (cb) => { this._cbs.push(cb); return { dispose() {} }; }; }
+		fire(v) { this._cbs.slice().forEach((cb) => cb(v)); }
+		dispose() {}
+	},
 	Uri: {
 		joinPath: (base, name) => ({ scheme: 'file', fsPath: path.join(base.fsPath, name) }),
 		file: (p) => ({ scheme: 'file', fsPath: p })
@@ -81,6 +98,17 @@ const mockVscode = {
 				_triggerHide: () => { if (listeners.hide) { listeners.hide(); } }
 			};
 			return pick;
+		},
+		createTreeView: (id, opts) => {
+			const listeners = {};
+			const tv = {
+				treeDataProvider: opts.treeDataProvider,
+				onDidChangeVisibility: (cb) => { listeners.vis = cb; return { dispose() {} }; },
+				_triggerVisible: () => { if (listeners.vis) { listeners.vis({ visible: true }); } },
+				dispose() {}
+			};
+			mockTreeView = tv;
+			return tv;
 		},
 		showInformationMessage: async (m) => { log.push(`info:${m}`); return undefined; },
 		activeTextEditor: null
@@ -141,7 +169,7 @@ const handler = handlers['wpmanager.generate'];
 		'editor.formatOnPaste': true
 	});
 	assert(text.includes('\t'), '应使用 tab 缩进');
-	assert(log.includes('exec:vscode.openFolder'), '生成后应自动调用打开工作区');
+	assert(log.some((l) => l.startsWith('exec:vscode.openFolder')), '生成后应自动调用打开工作区');
 
 	// 用例 3:文件已存在且用户选择不覆盖 → 不再写入
 	log.length = 0;
@@ -199,7 +227,7 @@ const handler = handlers['wpmanager.generate'];
 	const projDir = path.join(dirA, 'my_app');
 	assert(log.includes(`mkdir:${projDir}`), `应创建项目文件夹 ${projDir}`);
 	assert(log.includes(`write:${path.join(projDir, 'my_app.code-workspace')}`), '应生成 my_app.code-workspace');
-	assert(log.includes('exec:vscode.openFolder'), '应自动打开新项目工作区');
+	assert(log.some((l) => l.startsWith('exec:vscode.openFolder')), '应自动打开新项目工作区');
 	assert(mockGlobalState.data['wpmanager.projectDirHistory'][0].dir === dirA, '选定目录应记入历史并置顶');
 
 	// 用例 8:浏览选择目录(第二行) → 同样进入 step2 创建
@@ -400,5 +428,274 @@ const handler = handlers['wpmanager.generate'];
 	assert(log.some((l) => l.startsWith('error:')), '未解析到图片应报错');
 	assert(!log.some((l) => l.startsWith('spawn:')), '不应拉起 PS');
 	fs.rmSync(psDir, { recursive: true, force: true });
-	console.log('OK: 24 个用例全部通过');
+
+	// ==================== P1:工作区切换中心(手动分组版) ====================
+	// 用例 24:视图创建 + 命令注册 + 空注册表空态 + 空态不写盘
+	log.length = 0;
+	delete mockGlobalState.data['wpmanager.workspaceRegistry'];
+	mockVscode.workspace.workspaceFile = undefined;
+	mockVscode.workspace.workspaceFolders = null;
+	mockConfig['wpmanager.scanMaxDepth'] = 3;
+	delete mockConfig['wpmanager.scanExcludeNames'];
+	mockVscode.window.showWarningMessage = async (m) => { log.push(`warn:${m}`); return undefined; };
+	await flush(); // 等激活时发起的初始 refresh 收尾
+	assert(mockTreeView, 'activate 应创建工作区树视图');
+	assert(mockTreeView.treeDataProvider, '树视图应持有 provider');
+	const provider = ext.__test.active.provider;
+	assert(typeof handlers['wpmanager._openEntry'] === 'function', '内部打开命令应已注册');
+	assert(typeof handlers['wpmanager.addWorkspaceFile'] === 'function', '添加文件命令应已注册');
+	assert(typeof handlers['wpmanager.addProjectFolder'] === 'function', '添加文件夹命令应已注册');
+	assert(typeof handlers['wpmanager.removeWorkspaceEntry'] === 'function', '移除命令应已注册');
+	const roots0 = await provider.getChildren();
+	assert(roots0.length === 1 && roots0[0].contextValue === 'empty', '空注册表应显示空态节点');
+	assert(!mockGlobalState.data['wpmanager.workspaceRegistry'], '空状态下不应写入注册表');
+
+	// 用例 25:路径去重键(Windows 大小写不敏感)
+	if (process.platform === 'win32') {
+		assert.strictEqual(ext.__test.dedupeKey('D:\\A\\B\\c'), 'd:\\a\\b\\c', 'win32 比较键应小写');
+	}
+
+	// 用例 26:添加单个 .code-workspace → 未归类;重复去重;非法扩展报错
+	const ctx = { globalState: mockGlobalState };
+	const loneDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wslone-'));
+	const loneWs = path.join(loneDir, 'lone.code-workspace');
+	fs.writeFileSync(loneWs, '{}');
+	const loneTxt = path.join(loneDir, 'notes.txt');
+	fs.writeFileSync(loneTxt, 'x');
+	mockVscode.window.showOpenDialog = async () => [{ scheme: 'file', fsPath: loneWs }];
+	await handlers['wpmanager.addWorkspaceFile']();
+	let regData = mockGlobalState.data['wpmanager.workspaceRegistry'];
+	assert(regData && regData.version === 3 && regData.roots.length === 0 && regData.entries.length === 1, '应写入 v3 结构且无分组根');
+	assert(regData.entries[0].root === '' && regData.entries[0].id === path.normalize(loneWs), '单文件应落未归类(root="")');
+	await handlers['wpmanager.addWorkspaceFile']();
+	assert(mockGlobalState.data['wpmanager.workspaceRegistry'].entries.length === 1, '重复添加应去重');
+	log.length = 0;
+	mockVscode.window.showOpenDialog = async () => [{ scheme: 'file', fsPath: loneTxt }];
+	await handlers['wpmanager.addWorkspaceFile']();
+	assert(log.some((l) => l.startsWith('error:')), '非 .code-workspace 应报错');
+	assert(mockGlobalState.data['wpmanager.workspaceRegistry'].entries.length === 1, '非法文件不应入库');
+
+	// 用例 27:添加多项目文件夹 → 分组根 + 扫描子文件夹(排除名 + 深度上限 + 幂等)
+	const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscan-'));
+	fs.mkdirSync(path.join(scanRoot, 'a', 'b', 'c'), { recursive: true });
+	fs.mkdirSync(path.join(scanRoot, 'node_modules'), { recursive: true });
+	fs.writeFileSync(path.join(scanRoot, 'one.code-workspace'), '{}');
+	fs.writeFileSync(path.join(scanRoot, 'a', 'two.code-workspace'), '{}');
+	fs.writeFileSync(path.join(scanRoot, 'a', 'b', 'three.code-workspace'), '{}');
+	fs.writeFileSync(path.join(scanRoot, 'a', 'b', 'c', 'four.code-workspace'), '{}');
+	fs.writeFileSync(path.join(scanRoot, 'node_modules', 'five.code-workspace'), '{}');
+	mockVscode.window.showOpenDialog = async () => [{ scheme: 'file', fsPath: scanRoot }];
+	await handlers['wpmanager.addProjectFolder']();
+	regData = mockGlobalState.data['wpmanager.workspaceRegistry'];
+	assert(regData.roots.length === 1 && regData.roots[0].id === path.normalize(scanRoot), '应登记分组根');
+	assert(regData.entries.length === 4, '未归类 1 + 扫描 3(four 超深、five 被排除)');
+	assert(regData.entries.filter((e) => e.root === path.normalize(scanRoot)).length === 3, '扫描条目应归属分组根');
+	await handlers['wpmanager.addProjectFolder']();
+	assert(mockGlobalState.data['wpmanager.workspaceRegistry'].roots.length === 1, '重复添加文件夹应去重');
+	assert(mockGlobalState.data['wpmanager.workspaceRegistry'].entries.length === 4, '重复扫描应幂等');
+
+	// 用例 28:扫描不抢其他分组的条目
+	const sixWs = path.join(scanRoot, 'six.code-workspace');
+	fs.writeFileSync(sixWs, '{}');
+	assert(await ext.__test.addWorkspaceFile(ctx, sixWs) === 'added', '应先手动加入未归类');
+	assert(await ext.__test.scanRootFolder(ctx, scanRoot) === 0, '已在未归类的文件扫描时不应重复入库');
+	const sixEntry = mockGlobalState.data['wpmanager.workspaceRegistry'].entries.find((e) => e.id === path.normalize(sixWs));
+	assert(sixEntry && sixEntry.root === '', '未归类条目不应被扫描抢走');
+
+	// 用例 29:移除——单条删除;分组根级联删除整个分组(不动磁盘文件)
+	assert(await ext.__test.removeById(ctx, loneWs) === true, '应删除单条');
+	assert(!mockGlobalState.data['wpmanager.workspaceRegistry'].entries.some((e) => e.id === path.normalize(loneWs)), '单条应已移除');
+	assert(await ext.__test.removeById(ctx, scanRoot) === true, '应删除分组');
+	regData = mockGlobalState.data['wpmanager.workspaceRegistry'];
+	assert(regData.roots.length === 0, '分组根应已移除');
+	assert(regData.entries.length === 1 && regData.entries[0].id === path.normalize(sixWs), '分组条目应级联移除,未归类条目保留');
+	assert(fs.existsSync(path.join(scanRoot, 'one.code-workspace')), '移除不应动磁盘文件');
+
+	// 用例 30:树结构——分组根(按添加序)+ 未归类 + 组内按名称排序 + id 唯一
+	fs.writeFileSync(loneWs, '{}'); // 重建文件供后续用例
+	mockVscode.window.showOpenDialog = async () => [{ scheme: 'file', fsPath: loneWs }];
+	await handlers['wpmanager.addWorkspaceFile']();
+	mockVscode.window.showOpenDialog = async () => [{ scheme: 'file', fsPath: scanRoot }];
+	await handlers['wpmanager.addProjectFolder']();
+	const groups = await provider.getChildren();
+	const rootGroup = groups.find((g) => g.wsRoot === path.normalize(scanRoot));
+	const ungrouped = groups.find((g) => g.wsSection === 'ungrouped');
+	assert(rootGroup && rootGroup.label === path.basename(scanRoot) && rootGroup.description === path.dirname(scanRoot), '分组根 label=文件夹名 description=父目录');
+	assert(rootGroup.iconPath.id === 'folder-library' && rootGroup.wsRoot === path.normalize(scanRoot), '分组根图标与 wsRoot');
+	assert(ungrouped && ungrouped.label === 'ws.group.ungrouped' && ungrouped.iconPath.id === 'archive', '未归类分组(内置)');
+	const rootItems = await provider.getChildren(rootGroup);
+	assert(rootItems.length === 3 && rootItems[0].label === 'one.code-workspace' && rootItems[1].label === 'three.code-workspace' && rootItems[2].label === 'two.code-workspace', '组内按名称排序(one/three/two)');
+	const ungroupedItems = await provider.getChildren(ungrouped);
+	assert(ungroupedItems.length === 2 && ungroupedItems[0].label === 'lone.code-workspace' && ungroupedItems[1].label === 'six.code-workspace', '未归类组应含 lone/six(按名称排序)');
+	const allIds = groups.map((g) => g.id).concat(rootItems.map((i) => i.id)).concat(ungroupedItems.map((i) => i.id));
+	assert(new Set(allIds).size === allIds.length, 'TreeItem id 必须唯一');
+	const oneItem = rootItems[0];
+	assert(oneItem.description === path.dirname(oneItem.wsEntry.id), '常规行 description=父目录');
+	assert(oneItem.contextValue === 'entry' && oneItem.iconPath.id === 'window', '常规行 contextValue 与图标(window)');
+	assert(oneItem.command && oneItem.command.command === 'wpmanager._selectEntry', '单击绑定选中命令(不直接切换)');
+	assert(oneItem.checkboxState === undefined, '已无收藏 checkbox');
+
+	// 用例 31:失效标记(stat 失败 → stale)+ 失效条目单击只提示不切换
+	fs.rmSync(path.join(scanRoot, 'a', 'b', 'three.code-workspace'), { force: true });
+	const rootItems2 = await provider.getChildren(rootGroup);
+	const staleItem = rootItems2.find((i) => i.wsEntry.id.endsWith('three.code-workspace'));
+	assert(staleItem && staleItem.wsEntry.stale === true, '文件删除后应标记 stale');
+	assert(staleItem.iconPath.id === 'circle-slash' && staleItem.description === 'ws.stale', '失效行图标与说明');
+	assert(staleItem.contextValue.includes('stale'), '失效行 contextValue 带 stale');
+	log.length = 0;
+	await handlers['wpmanager._openEntry'](staleItem.wsEntry, false);
+	assert(log.some((l) => l.startsWith('warn:')), '失效条目单击应提示');
+	assert(!log.some((l) => l.startsWith('exec:vscode.openFolder')), '失效条目不应切换');
+
+	// 用例 32:刷新镜像磁盘——分组内消失的条目被清理,未归类条目不清理
+	fs.rmSync(loneWs, { force: true });
+	await ext.__test.refreshWorkspaces(ctx, provider);
+	regData = mockGlobalState.data['wpmanager.workspaceRegistry'];
+	assert(!regData.entries.some((e) => e.id.endsWith('three.code-workspace')), '分组内消失的文件应被清理');
+	assert(regData.entries.some((e) => e.id === path.normalize(loneWs)), '未归类条目即使文件消失也不清理(仅标失效)');
+
+	// 用例 33:单击切换 → 先写注册表再 openFolder(uri, false),打开计数+1
+	log.length = 0;
+	await handlers['wpmanager._openEntry'](oneItem.wsEntry, false);
+	const stateIdx = log.findIndex((l) => l.startsWith('state:wpmanager.workspaceRegistry='));
+	const execIdx = log.findIndex((l) => l.startsWith('exec:vscode.openFolder:'));
+	assert(stateIdx >= 0 && execIdx > stateIdx, '必须先写打开记录再切换(同窗切换会重载窗口)');
+	assert(log.includes(`exec:vscode.openFolder:${oneItem.wsEntry.id}:false`), '同窗切换 newWindow=false');
+	const after33 = mockGlobalState.data['wpmanager.workspaceRegistry'].entries.find((e) => e.id === oneItem.wsEntry.id);
+	assert(after33.openCount === 1 && after33.lastOpenedAt > 0, '打开记录应写入');
+
+	// 用例 34:当前工作区标记(图标 folder-active + contextValue current)
+	mockVscode.workspace.workspaceFile = { scheme: 'file', fsPath: oneItem.wsEntry.id };
+	const rootItems3 = await provider.getChildren(rootGroup);
+	const oneItem2 = rootItems3.find((i) => i.wsEntry.id === oneItem.wsEntry.id);
+	assert(oneItem2.iconPath.id === 'folder-active' && oneItem2.contextValue.includes('current'), '当前条目应高亮标记');
+
+	// 用例 35:视图可见不再全量重扫(fs.watch 事件驱动);磁盘变化由防抖后的单根扫描合入
+	fs.writeFileSync(path.join(scanRoot, 'seven.code-workspace'), '{}');
+	mockTreeView._triggerVisible();
+	await flush();
+	assert(!mockGlobalState.data['wpmanager.workspaceRegistry'].entries.some((e) => e.id.endsWith('seven.code-workspace')), '监听健康时视图可见不应触发全量重扫');
+	assert(await ext.__test.scanRootFolder(ctx, scanRoot) === 1, 'watch 防抖后的单根扫描应合入新文件');
+
+	// 用例 36:单击条目 → 变为可展开父节点,操作行作为其子级(真实缩进分层);再次单击收起;换选迁移
+	log.length = 0;
+	await handlers['wpmanager._selectEntry'](oneItem.wsEntry);
+	let rootItems4 = await provider.getChildren(rootGroup);
+	const selRow = rootItems4.find((i) => i.wsEntry && i.wsEntry.id === oneItem.wsEntry.id);
+	assert(selRow && selRow.collapsibleState === mockVscode.TreeItemCollapsibleState.Expanded, '选中条目应变为 Expanded 父节点');
+	assert(selRow.id.includes('::sel'), '选中态使用独立 id(避开折叠状态持久化)');
+	assert(selRow.wsActions === true, '选中条目应携带 wsActions 标记');
+	const actions = await provider.getChildren(selRow);
+	assert(actions.length === 5, '操作行=切换/打开/置顶/备用名/忽略');
+	assert(actions[0].command.command === 'wpmanager._openEntry' && actions[0].command.arguments[1] === false, '第一项=切换到该工作区(本窗口)');
+	assert(actions[1].command.command === 'wpmanager._openEntry' && actions[1].command.arguments[1] === true, '第二项=打开工作区(新窗口)');
+	assert(actions[2].command.command === 'wpmanager._setPinned' && actions[3].command.command === 'wpmanager._setAlias' && actions[4].command.command === 'wpmanager._setIgnored', '后三项=置顶→备用名→忽略');
+	assert(actions.every((i) => i.contextValue === 'action' && i.iconPath && i.iconPath.id), '操作行均带图标(iconPath 呈现)');
+	await handlers['wpmanager._selectEntry'](oneItem.wsEntry); // 再点收起
+	rootItems4 = await provider.getChildren(rootGroup);
+	const row4 = rootItems4.find((i) => i.wsEntry && i.wsEntry.id === oneItem.wsEntry.id);
+	assert(row4 && row4.collapsibleState === mockVscode.TreeItemCollapsibleState.None && !row4.wsActions, '再次单击应收起(变回叶子)');
+	const twoRow = rootItems4.find((i) => i.wsEntry && i.wsEntry.id.endsWith('two.code-workspace'));
+	await handlers['wpmanager._selectEntry'](twoRow.wsEntry);
+	rootItems4 = await provider.getChildren(rootGroup);
+	const selRow2 = rootItems4.find((i) => i.wsEntry && i.wsEntry.id.endsWith('two.code-workspace'));
+	assert(selRow2 && selRow2.id.includes('::sel'), '换选应迁移到新条目');
+	assert(!rootItems4.some((i) => i.wsEntry && i.wsEntry.id === oneItem.wsEntry.id && i.id.includes('::sel')), '旧条目应退出选中态');
+
+	// 用例 37:忽略 → 收进分组顶部「已忽略工作区」;忽略会清置顶;取消忽略恢复
+	const ignoreAct = (await provider.getChildren(selRow2)).find((i) => i.command.command === 'wpmanager._setIgnored');
+	await handlers['wpmanager._setIgnored'](...ignoreAct.command.arguments); // 忽略 two
+	let groups2 = await provider.getChildren();
+	const rootGroup2 = groups2.find((g) => g.wsRoot === path.normalize(scanRoot));
+	assert(rootGroup2.contextValue.includes('ign-hidden') && !rootGroup2.contextValue.includes('ign-shown'), '已忽略节点默认隐藏(contextValue 标记)');
+	let rootRows = await provider.getChildren(rootGroup2);
+	assert(!rootRows.some((i) => i.contextValue === 'ignored'), '默认不渲染已忽略节点');
+	await handlers['wpmanager.showIgnoredWorkspaces'](rootGroup2); // 右键:显示已忽略项目
+	groups2 = await provider.getChildren();
+	const rootGroup2b = groups2.find((g) => g.wsRoot === path.normalize(scanRoot));
+	assert(rootGroup2b.contextValue.includes('ign-shown'), '显示开关应切换 contextValue');
+	rootRows = await provider.getChildren(rootGroup2b);
+	const ignoredNode = rootRows.find((i) => i.contextValue === 'ignored');
+	assert(ignoredNode && ignoredNode.label === 'ws.group.ignored' && ignoredNode.iconPath.id === 'eye-closed' && rootRows[0] === ignoredNode, '开启后分组顶部出现「已忽略工作区」节点');
+	let ignoredChildren = await provider.getChildren(ignoredNode);
+	assert(ignoredChildren.length === 1 && ignoredChildren[0].label === 'two.code-workspace', '被忽略条目应收进已忽略节点');
+	// 置顶后忽略:置顶被清除
+	const sevenEntry = mockGlobalState.data['wpmanager.workspaceRegistry'].entries.find((e) => e.id.endsWith('seven.code-workspace'));
+	await handlers['wpmanager._setPinned'](sevenEntry, true);
+	await handlers['wpmanager._setIgnored'](sevenEntry, true);
+	const sevenAfter = mockGlobalState.data['wpmanager.workspaceRegistry'].entries.find((e) => e.id.endsWith('seven.code-workspace'));
+	assert(sevenAfter.ignored === true && sevenAfter.pinned === false, '忽略应同时清置顶');
+	// 被忽略条目也能展开操作行 → 取消忽略
+	ignoredChildren = await provider.getChildren(ignoredNode);
+	const twoIgnoredRow = ignoredChildren.find((i) => i.wsEntry && i.wsEntry.id.endsWith('two.code-workspace'));
+	await handlers['wpmanager._selectEntry'](twoIgnoredRow.wsEntry);
+	ignoredChildren = await provider.getChildren(ignoredNode);
+	const twoSelectedRow = ignoredChildren.find((i) => i.wsEntry && i.wsEntry.id.endsWith('two.code-workspace'));
+	assert(twoSelectedRow && twoSelectedRow.wsActions === true, '被忽略条目选中后同样变为可展开父节点');
+	const unignoreAct = (await provider.getChildren(twoSelectedRow)).find((i) => i.command.command === 'wpmanager._setIgnored');
+	assert(unignoreAct && unignoreAct.label === 'ws.act.unignore' && unignoreAct.iconPath.id === 'eye', '被忽略条目子级操作行应为取消忽略(iconPath 呈现图标)');
+	await handlers['wpmanager._setIgnored'](...unignoreAct.command.arguments);
+	rootRows = await provider.getChildren(rootGroup2);
+	assert(rootRows.some((i) => i.wsEntry && i.wsEntry.id.endsWith('two.code-workspace')), '取消忽略应回到普通列表');
+
+	// 用例 38:置顶 → 组内排序最前 + pinned 图标;取消置顶恢复(用 two:one 是当前工作区,当前图标优先级更高)
+	await handlers['wpmanager._setPinned'](twoRow.wsEntry, true);
+	let rootRows3 = await provider.getChildren(rootGroup2);
+	const normalRows = rootRows3.filter((i) => i.contextValue && i.contextValue.startsWith('entry'));
+	assert(normalRows[0].label === 'two.code-workspace' && normalRows[0].iconPath.id === 'pinned', '置顶条目排最前且用 pinned 图标(label 不再拼 $(codicon))');
+	await handlers['wpmanager._setPinned'](twoRow.wsEntry, false);
+	rootRows3 = await provider.getChildren(rootGroup2);
+	assert(rootRows3.find((i) => i.wsEntry && i.wsEntry.id === twoRow.wsEntry.id).iconPath.id === 'window', '取消置顶恢复 window 图标');
+
+	// 用例 39:忽略条目在镜像磁盘刷新中存活
+	await handlers['wpmanager._setIgnored'](twoRow.wsEntry, true);
+	await handlers['wpmanager._setIgnored']({ id: sixWs }, true);
+	await ext.__test.refreshWorkspaces(ctx, provider);
+	const regAfter39 = mockGlobalState.data['wpmanager.workspaceRegistry'];
+	assert(regAfter39.entries.find((e) => e.id.endsWith('two.code-workspace')).ignored === true, '分组内被忽略条目重扫后应保留忽略状态');
+	assert(regAfter39.entries.find((e) => e.id === path.normalize(sixWs)).ignored === true, '未归类被忽略条目重扫后应保留');
+	groups2 = await provider.getChildren();
+	const ungroupedGroup2 = groups2.find((g) => g.wsSection === 'ungrouped');
+	assert(ungroupedGroup2.contextValue.includes('ign-hidden'), '未归类组默认也隐藏已忽略节点');
+	await handlers['wpmanager.showIgnoredWorkspaces'](ungroupedGroup2);
+	assert((await provider.getChildren(ungroupedGroup2)).some((i) => i.contextValue === 'ignored'), '未归类组开启后也显示已忽略节点');
+
+	// 用例 41:已忽略节点显示状态持久化(roots[].showIgnored / ungroupedShowIgnored)+ 隐藏往返
+	const regMeta = mockGlobalState.data['wpmanager.workspaceRegistry'];
+	assert(regMeta.roots.find((r) => r.id === path.normalize(scanRoot)).showIgnored === true, '分组根的显示开关应持久化');
+	assert(regMeta.ungroupedShowIgnored === true, '未归类的显示开关应持久化');
+	await handlers['wpmanager.hideIgnoredWorkspaces'](groups2.find((g) => g.wsRoot === path.normalize(scanRoot)));
+	assert(mockGlobalState.data['wpmanager.workspaceRegistry'].roots.find((r) => r.id === path.normalize(scanRoot)).showIgnored === false, '隐藏应写回 false');
+	const rootGroup3 = (await provider.getChildren()).find((g) => g.wsRoot === path.normalize(scanRoot));
+	assert(rootGroup3.contextValue.includes('ign-hidden') && !rootGroup3.contextValue.includes('ign-shown'), '隐藏后 contextValue 切回');
+	assert(!(await provider.getChildren(rootGroup3)).some((i) => i.contextValue === 'ignored'), '隐藏后已忽略节点不再渲染');
+
+	// 用例 40:添加备用名 → 写入工作区文件 vscext_wpmanager.wpnickname 并作为显示名;清空恢复;坏 JSON 拒写
+	mockVscode.window.showInputBox = async () => '备用一号';
+	await handlers['wpmanager._setAlias'](oneItem.wsEntry);
+	const oneFile = JSON.parse(fs.readFileSync(oneItem.wsEntry.id, 'utf8'));
+	assert(oneFile.vscext_wpmanager && oneFile.vscext_wpmanager.wpnickname === '备用一号', '备用名应写入工作区文件 vscext_wpmanager.wpnickname');
+	let rootRows5 = await provider.getChildren(rootGroup2);
+	assert(rootRows5.find((i) => i.wsEntry && i.wsEntry.id === oneItem.wsEntry.id).label === '备用一号', '文件内昵称应作为显示名');
+	mockVscode.window.showInputBox = async () => '';
+	await handlers['wpmanager._setAlias'](oneItem.wsEntry);
+	const oneFile2 = JSON.parse(fs.readFileSync(oneItem.wsEntry.id, 'utf8'));
+	assert(oneFile2.vscext_wpmanager.wpnickname === '', '清空应写入空昵称');
+	rootRows5 = await provider.getChildren(rootGroup2);
+	assert(rootRows5.find((i) => i.wsEntry && i.wsEntry.id === oneItem.wsEntry.id).label === 'one.code-workspace', '清空后恢复默认名');
+	// 非 JSON 工作区文件 → 报错且绝不改写原文件
+	const badWs = path.join(scanRoot, 'bad.code-workspace');
+	fs.writeFileSync(badWs, '{ // 带注释的坏 JSON');
+	assert(await ext.__test.addWorkspaceFile(ctx, badWs) === 'added', '坏 JSON 文件也应能先入列表');
+	log.length = 0;
+	mockVscode.window.showInputBox = async () => '不该写入';
+	await handlers['wpmanager._setAlias']({ id: badWs });
+	assert(log.some((l) => l.startsWith('error:')), '非 JSON 文件应报错');
+	assert(fs.readFileSync(badWs, 'utf8') === '{ // 带注释的坏 JSON', '坏文件不应被改写');
+
+	// 清理 P1 临时目录(先停磁盘监听,Windows 下不关 watch 删目录会 EBUSY)
+	ext.__test.stopAllWatchers();
+	fs.rmSync(scanRoot, { recursive: true, force: true });
+	fs.rmSync(loneDir, { recursive: true, force: true });
+	console.log('OK: 42 个用例全部通过');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -3,3 +3,8 @@
 test/**
 .gitignore
 *.code-workspace
+node_modules/**
+*.vsix
+DESIGN.md
+VSCODE_EXTENSION_DEV_GUIDE.md
+_temp/**
