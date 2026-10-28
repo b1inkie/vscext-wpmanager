@@ -457,6 +457,7 @@ const handler = handlers['wpmanager.generate'];
 
 	// 用例 26:添加单个 .code-workspace → 未归类;重复去重;非法扩展报错
 	const ctx = { globalState: mockGlobalState };
+	const nicknameCacheClearForTest = (id) => ext.__test.clearNicknameCache(id);
 	const loneDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wslone-'));
 	const loneWs = path.join(loneDir, 'lone.code-workspace');
 	fs.writeFileSync(loneWs, '{}');
@@ -670,17 +671,29 @@ const handler = handlers['wpmanager.generate'];
 	assert(rootGroup3.contextValue.includes('ign-hidden') && !rootGroup3.contextValue.includes('ign-shown'), '隐藏后 contextValue 切回');
 	assert(!(await provider.getChildren(rootGroup3)).some((i) => i.contextValue === 'ignored'), '隐藏后已忽略节点不再渲染');
 
-	// 用例 40:添加备用名 → 写入工作区文件 vscext_wpmanager.wpnickname 并作为显示名;清空恢复;坏 JSON 拒写
+	// 用例 40:添加备用名 → 写入工作区文件 wpmanager.wpnickname 并作为显示名;旧 vscext_wpmanager 字段原样保留不读不删;清空恢复;坏 JSON 拒写
+	fs.writeFileSync(oneItem.wsEntry.id, JSON.stringify({ folders: [{ path: '.' }], vscext_wpmanager: { wpnickname: '旧字段名' } }, null, '\t') + '\n');
+	nicknameCacheClearForTest(oneItem.wsEntry.id);
 	mockVscode.window.showInputBox = async () => '备用一号';
 	await handlers['wpmanager._setAlias'](oneItem.wsEntry);
 	const oneFile = JSON.parse(fs.readFileSync(oneItem.wsEntry.id, 'utf8'));
-	assert(oneFile.vscext_wpmanager && oneFile.vscext_wpmanager.wpnickname === '备用一号', '备用名应写入工作区文件 vscext_wpmanager.wpnickname');
+	assert(oneFile.wpmanager && oneFile.wpmanager.wpnickname === '备用一号', '备用名应写入工作区文件 wpmanager.wpnickname');
+	assert(oneFile.vscext_wpmanager && oneFile.vscext_wpmanager.wpnickname === '旧字段名', '旧字段应原样保留(不读也不删)');
 	let rootRows5 = await provider.getChildren(rootGroup2);
 	assert(rootRows5.find((i) => i.wsEntry && i.wsEntry.id === oneItem.wsEntry.id).label === '备用一号', '文件内昵称应作为显示名');
 	mockVscode.window.showInputBox = async () => '';
 	await handlers['wpmanager._setAlias'](oneItem.wsEntry);
 	const oneFile2 = JSON.parse(fs.readFileSync(oneItem.wsEntry.id, 'utf8'));
-	assert(oneFile2.vscext_wpmanager.wpnickname === '', '清空应写入空昵称');
+	assert(oneFile2.wpmanager.wpnickname === '', '清空应写入空昵称');
+	// 旧字段不再读取:仅有 v0.6.0 写出的 vscext_wpmanager.wpnickname 时,显示名回退到文件名
+	fs.writeFileSync(oneItem.wsEntry.id, JSON.stringify({ folders: [{ path: '.' }], vscext_wpmanager: { wpnickname: '旧字段回退' } }, null, '\t') + '\n');
+	nicknameCacheClearForTest(oneItem.wsEntry.id);
+	rootRows5 = await provider.getChildren(rootGroup2);
+	assert(rootRows5.find((i) => i.wsEntry && i.wsEntry.id === oneItem.wsEntry.id).label === 'one.code-workspace', '旧字段不再读取,显示名回退文件名');
+	fs.writeFileSync(oneItem.wsEntry.id, '{}\n');
+	nicknameCacheClearForTest(oneItem.wsEntry.id);
+	rootRows5 = await provider.getChildren(rootGroup2);
+	assert(rootRows5.find((i) => i.wsEntry && i.wsEntry.id === oneItem.wsEntry.id).label === 'one.code-workspace', '清空后恢复默认名');
 	rootRows5 = await provider.getChildren(rootGroup2);
 	assert(rootRows5.find((i) => i.wsEntry && i.wsEntry.id === oneItem.wsEntry.id).label === 'one.code-workspace', '清空后恢复默认名');
 	// 非 JSON 工作区文件 → 报错且绝不改写原文件

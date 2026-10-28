@@ -408,7 +408,7 @@ async function setPinned(context, fsPath, pinned) {
 		return true;
 	}
 
-/** 注册表 alias 同步副本(显示名优先取工作区文件内 vscext_wpmanager.wpnickname;空串清除) */
+/** 注册表 alias 同步副本(显示名优先取工作区文件内 wpmanager.wpnickname;空串清除) */
 async function setAlias(context, fsPath, alias) {
 	const reg = await loadRegistry(context);
 	const entry = findEntry(reg, fsPath);
@@ -623,7 +623,7 @@ async function setShowIgnored(context, item, show) {
 /** 工作区文件昵称缓存:按 mtime+size 失效,避免每次渲染都读文件 */
 const nicknameCache = new Map(); // 去重键 -> { mtimeMs, size, nickname }
 
-/** 读取 .code-workspace 里的 vscext_wpmanager.wpnickname(容错:非 JSON/无字段返回 '') */
+/** 读取 .code-workspace 里的 wpmanager.wpnickname(容错:非 JSON/无字段返回 '';旧字段 vscext_wpmanager 不再读取) */
 async function readFileNickname(id, st) {
 	const key = dedupeKey(id);
 	const hit = nicknameCache.get(key);
@@ -633,7 +633,7 @@ async function readFileNickname(id, st) {
 	let nickname = '';
 	try {
 		const obj = JSON.parse(await fs.promises.readFile(id, 'utf8'));
-		const n = obj && obj.vscext_wpmanager && obj.vscext_wpmanager.wpnickname;
+		const n = obj && obj.wpmanager && obj.wpmanager.wpnickname;
 		if (typeof n === 'string') {
 			nickname = n.trim();
 		}
@@ -644,7 +644,7 @@ async function readFileNickname(id, st) {
 	return nickname;
 }
 
-/** 条目显示名:文件内 vscext_wpmanager.wpnickname → 注册表备用名 → 文件名 */
+/** 条目显示名:文件内 wpmanager.wpnickname → 注册表备用名 → 文件名 */
 function entryDisplayName(vm) {
 	if (vm.nickname && vm.nickname.trim()) {
 		return vm.nickname.trim();
@@ -1069,7 +1069,7 @@ function activate(context) {
 			return; // 取消
 		}
 		const nickname = alias.trim();
-		// 备用名写入工作区文件 vscext_wpmanager.wpnickname(随文件走);非标准 JSON 拒写,绝不改写带注释的文件
+		// 备用名写入工作区文件 wpmanager.wpnickname(随文件走);非标准 JSON 拒写,绝不改写带注释的文件
 		let obj;
 		try {
 			obj = JSON.parse(await fs.promises.readFile(vm.id, 'utf8'));
@@ -1081,7 +1081,8 @@ function activate(context) {
 			vscode.window.showErrorMessage(vscode.l10n.t('ws.alias.fileInvalid', vm.id));
 			return;
 		}
-		obj.vscext_wpmanager = Object.assign({}, obj.vscext_wpmanager, { wpnickname: nickname });
+		obj.wpmanager = Object.assign({}, obj.wpmanager, { wpnickname: nickname });
+		// 旧字段 vscext_wpmanager 不管:不读也不删,原样保留在文件里
 		try {
 			await fs.promises.writeFile(vm.id, JSON.stringify(obj, null, '\t') + '\n');
 		} catch (err) {
@@ -1204,6 +1205,7 @@ function deactivate() {}
 // __test:测试钩子(纯函数与数据层),生产路径不使用;active 由 activate() 注入
 const __test = {
 	dedupeKey, loadRegistry,
-	addWorkspaceFile, addProjectFolder, scanRootFolder, removeById, refreshWorkspaces, stopAllWatchers
+	addWorkspaceFile, addProjectFolder, scanRootFolder, removeById, refreshWorkspaces, stopAllWatchers,
+	clearNicknameCache: (id) => nicknameCache.delete(dedupeKey(id))
 };
 module.exports = { activate, deactivate, __test };

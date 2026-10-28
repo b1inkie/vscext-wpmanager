@@ -2,7 +2,7 @@
 	"name": "wpmanager",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "0.6.0",
+	"version": "0.6.1",
 	"publisher": "lan",
 	"icon": "media/icon.png",
 	"repository": {
