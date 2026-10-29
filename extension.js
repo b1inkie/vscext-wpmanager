@@ -1,7 +1,7 @@
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 
 /** 生成的 .code-workspace 模板(注意:此处是合法 JSON,不能带尾逗号) */
 const WORKSPACE_TEMPLATE = {
@@ -133,6 +133,56 @@ function btnId(e, id) {
  * 第一行:输入框直接输入目录路径后回车;第二行:浏览选择;第三行起:历史目录(可删除/设置备用名)。
  * 注意:先读齐历史、在 show() 前一次性赋值 items;show 后立刻二次赋值会触发列表渲染竞态(新行变空行)。
  */
+/** 新项目 Step3:创建选项多选(确认创建/git init/workspace 文件/gitignore 文件,默认全勾);未勾「确认创建」视为放弃(返回 null) */
+async function pickNewProjectOptions() {
+	const pick = vscode.window.createQuickPick();
+	pick.canSelectMany = true;
+	pick.title = vscode.l10n.t('src.extension.np.options_title');
+	pick.placeholder = vscode.l10n.t('src.extension.np.options_placeholder');
+	const items = [
+		{ key: 'confirm', label: `$(check) ${vscode.l10n.t('src.extension.np.opt_confirm')}`, description: vscode.l10n.t('src.extension.np.opt_confirm_desc'), alwaysShow: true },
+		{ key: 'git', label: `$(git-branch) ${vscode.l10n.t('src.extension.np.opt_git')}` },
+		{ key: 'workspace', label: `$(json) ${vscode.l10n.t('src.extension.np.opt_workspace')}` },
+		{ key: 'gitignore', label: `$(eye-closed) ${vscode.l10n.t('src.extension.np.opt_gitignore')}` }
+	];
+	pick.items = items; // items 在 show() 前一次性赋值
+	pick.selectedItems = items.slice(); // 默认全勾
+	pick.ignoreFocusOut = true;
+	return await new Promise((resolve) => {
+		let settled = false;
+		const finish = (v) => {
+			if (!settled) {
+				settled = true;
+				resolve(v);
+			}
+		};
+		pick.onDidAccept(() => {
+			const keys = new Set(pick.selectedItems.map((i) => i.key));
+			finish(keys.has('confirm') ? keys : null);
+			pick.hide();
+		});
+		pick.onDidHide(() => finish(null));
+		pick.show();
+	});
+}
+
+/** 生成默认 .gitignore */
+async function writeGitignoreFile(folderUri) {
+	const content = ['node_modules/', 'dist/', 'out/', '.env', '.DS_Store', 'Thumbs.db', '*.log'].join('\n') + '\n';
+	await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folderUri, '.gitignore'), new TextEncoder().encode(content));
+}
+
+/** 在目录里执行 git init;成功 true,失败 false(git 未装/目录异常不阻断创建流程) */
+function runGitInit(cwd) {
+	return new Promise((resolve) => {
+		try {
+			execFile('git', ['init'], { cwd, windowsHide: true }, (err) => resolve(!err));
+		} catch {
+			resolve(false);
+		}
+	});
+}
+
 async function pickProjectDir(context) {
 	const hist = await loadDirHistory(context);
 	return new Promise((resolve) => {
@@ -920,17 +970,40 @@ function activate(context) {
 			return;
 		}
 
+		// 先做同名冲突检查(提前失败,不浪费用户走选项多选)
 		const projectUri = vscode.Uri.joinPath(dirUri, projectName);
 		try {
-			try {
-				await vscode.workspace.fs.stat(projectUri);
-				vscode.window.showErrorMessage(vscode.l10n.t('src.extension.np.exists', projectName));
-				return; // 已存在同名项目,不碰用户数据
-			} catch {
-				// 不存在,继续创建
-			}
+			await vscode.workspace.fs.stat(projectUri);
+			vscode.window.showErrorMessage(vscode.l10n.t('src.extension.np.exists', projectName));
+			return; // 已存在同名项目,不碰用户数据
+		} catch {
+			// 不存在,继续
+		}
+		// Step 3:创建选项多选(默认全勾;未勾「确认创建」= 放弃)
+		const options = await pickNewProjectOptions();
+		if (!options) {
+			return;
+		}
+		try {
 			await vscode.workspace.fs.createDirectory(projectUri);
-			await writeWorkspaceFile(projectUri);
+			if (options.has('gitignore')) {
+				await writeGitignoreFile(projectUri);
+			}
+			if (options.has('git')) {
+				const ok = await runGitInit(projectUri.fsPath);
+				if (!ok) {
+					vscode.window.showWarningMessage(vscode.l10n.t('src.extension.np.git_init_fail', projectName));
+				}
+			}
+			if (options.has('workspace')) {
+				await writeWorkspaceFile(projectUri); // 生成 .code-workspace 并自动打开(openFolder 会重载窗口,放最后)
+			} else {
+				try {
+					await vscode.commands.executeCommand('vscode.openFolder', projectUri, false); // 没勾 workspace 文件时打开文件夹本体
+				} catch {
+					// 打开失败不致命
+				}
+			}
 		} catch (err) {
 			vscode.window.showErrorMessage(vscode.l10n.t('src.extension.np.create_fail', describeError(err)));
 		}

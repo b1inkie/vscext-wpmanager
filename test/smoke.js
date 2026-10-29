@@ -15,6 +15,7 @@ const mockGlobalState = {
 };
 const mockConfig = {};
 let mockClip = '';
+let mockExecErr = false; // child_process.execFile 的 mock 错误开关
 let copyPathResult = '';
 let currentPick = null;
 let mockTreeView = null;
@@ -126,7 +127,8 @@ Module._load = function (request, ...rest) {
 	if (request === 'vscode') { return mockVscode; }
 	if (request === 'child_process') {
 		return {
-			spawn: (cmd, args) => { log.push(`spawn:${cmd}:${args.join(' ')}`); return { on() {}, unref() {} }; }
+			spawn: (cmd, args) => { log.push(`spawn:${cmd}:${args.join(' ')}`); return { on() {}, unref() {} }; },
+			execFile: (cmd, args, opts, cb) => { log.push(`exec:${cmd}:${args.join(' ')}`); const done = typeof opts === 'function' ? opts : cb; done(mockExecErr ? new Error('mock: git fail') : null); }
 		};
 	}
 	return origLoad.call(this, request, ...rest);
@@ -223,11 +225,15 @@ const handler = handlers['wpmanager.generate'];
 	currentPick.selectedItems = [currentPick.items[0]]; // 浏览行被过滤后被动高亮(复现 bug 场景)
 	currentPick._triggerAccept();
 	mockVscode.window.showInputBox = async (opts) => { log.push(`input:${opts && opts.placeHolder}`); return 'my_app'; };
+	await flush();
+	currentPick._triggerAccept(); // step3 创建选项默认全勾,直接接受
 	await npPromise;
 	const projDir = path.join(dirA, 'my_app');
 	assert(log.includes(`mkdir:${projDir}`), `应创建项目文件夹 ${projDir}`);
 	assert(log.includes(`write:${path.join(projDir, 'my_app.code-workspace')}`), '应生成 my_app.code-workspace');
 	assert(log.some((l) => l.startsWith('exec:vscode.openFolder')), '应自动打开新项目工作区');
+	assert(log.includes(`write:${path.join(projDir, '.gitignore')}`), '默认应生成 .gitignore');
+	assert(log.includes('exec:git:init'), '默认应执行 git init');
 	assert(mockGlobalState.data['wpmanager.projectDirHistory'][0].dir === dirA, '选定目录应记入历史并置顶');
 
 	// 用例 8:浏览选择目录(第二行) → 同样进入 step2 创建
@@ -240,6 +246,8 @@ const handler = handlers['wpmanager.generate'];
 	assert(browseItem.browse === true, '第一项应是浏览');
 	currentPick.selectedItems = [browseItem];
 	currentPick._triggerAccept();
+	await flush();
+	currentPick._triggerAccept(); // step3 全勾
 	await npPromise;
 	assert(log.includes(`mkdir:${path.join(dirB, 'my_app')}`), '应通过浏览目录创建项目');
 	assert(mockGlobalState.data['wpmanager.projectDirHistory'][0].dir === dirB, '浏览目录应记入历史置顶');
@@ -271,6 +279,8 @@ const handler = handlers['wpmanager.generate'];
 	assert(itemC.buttons.length === 2 && itemC.buttons[0].iconPath.id === 'edit' && itemC.buttons[1].iconPath.id === 'trash', '按钮必须是 {iconPath:ThemeIcon} 形状(裸 ThemeIcon 会导致空白行)');
 	currentPick.selectedItems = [itemC];
 	currentPick._triggerAccept();
+	await flush();
+	currentPick._triggerAccept(); // step3 全勾
 	await npPromise;
 	assert(log.includes(`mkdir:${path.join(dirC, 'my_app')}`), '应建在选中的历史目录');
 	const hist9 = mockGlobalState.data['wpmanager.projectDirHistory'];
@@ -337,6 +347,55 @@ const handler = handlers['wpmanager.generate'];
 	await npPromise;
 	assert(log.some((l) => l.startsWith('error:')), '非法项目名应报错');
 	assert(!log.some((l) => l.startsWith('mkdir:')), '不应创建文件夹');
+
+	// 用例 13c:step3 取消勾「确认创建」→ 放弃,什么都不建
+	log.length = 0;
+	mockGlobalState.data['wpmanager.projectDirHistory'] = [{ dir: dirA, alias: '' }];
+	npPromise = np();
+	await flush();
+	currentPick.selectedItems = [currentPick.items[1]];
+	currentPick._triggerAccept();
+	mockVscode.window.showInputBox = async () => 'opt_out';
+	await flush();
+	assert(currentPick.items.length === 4 && currentPick.items.every((it) => it.key), 'step3 应为 4 项多选(确认/git/workspace/gitignore)');
+	assert(currentPick.selectedItems.length === 4, '默认应全勾');
+	currentPick.selectedItems = currentPick.items.filter((it) => it.key !== 'confirm');
+	currentPick._triggerAccept();
+	await npPromise;
+	assert(!log.some((l) => l.startsWith('mkdir:')), '未勾确认创建应放弃,不建目录');
+
+	// 用例 13d:只勾「确认创建」→ 仅建目录并打开文件夹本体
+	log.length = 0;
+	npPromise = np();
+	await flush();
+	currentPick.selectedItems = [currentPick.items[1]];
+	currentPick._triggerAccept();
+	mockVscode.window.showInputBox = async () => 'bare_app';
+	await flush();
+	currentPick.selectedItems = [currentPick.items.find((it) => it.key === 'confirm')];
+	currentPick._triggerAccept();
+	await npPromise;
+	assert(log.some((l) => l.startsWith('mkdir:')), '仅确认创建也应建目录');
+	assert(!log.some((l) => l.startsWith('write:')), '未勾 workspace/gitignore 不应写文件');
+	assert(!log.includes('exec:git:init'), '未勾 git init 不应执行');
+	assert(log.some((l) => l.startsWith('exec:vscode.openFolder')), '应打开项目文件夹本体');
+
+	// 用例 13e:git init 失败 → 警告但创建流程继续
+	log.length = 0;
+	mockExecErr = true;
+	mockVscode.window.showWarningMessage = async (m) => { log.push(`warn:${m}`); return undefined; };
+	npPromise = np();
+	await flush();
+	currentPick.selectedItems = [currentPick.items[1]];
+	currentPick._triggerAccept();
+	mockVscode.window.showInputBox = async () => 'gitfail_app';
+	await flush();
+	currentPick._triggerAccept(); // 默认全勾
+	await npPromise;
+	mockExecErr = false;
+	assert(log.includes('exec:git:init'), '应尝试 git init');
+	assert(log.some((l) => l.startsWith('warn:')), 'git init 失败应警告');
+	assert(log.some((l) => l.startsWith('write:')), '创建流程应继续(仍写 workspace/gitignore)');
 
 	fs.rmSync(dirA, { recursive: true, force: true });
 	fs.rmSync(dirB, { recursive: true, force: true });
@@ -710,5 +769,5 @@ const handler = handlers['wpmanager.generate'];
 	ext.__test.stopAllWatchers();
 	fs.rmSync(scanRoot, { recursive: true, force: true });
 	fs.rmSync(loneDir, { recursive: true, force: true });
-	console.log('OK: 42 个用例全部通过');
+	console.log('OK: 45 个用例全部通过');
 })().catch((e) => { console.error(e); process.exit(1); });
